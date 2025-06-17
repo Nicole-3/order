@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>智能点餐系统</title>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 0;
+      background: linear-gradient(135deg, #f4f6f8, #e3ecf3);
+      color: #333;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    header {
+      background: #4c7cff;
+      color: #fff;
+      padding: 1rem 2rem;
+      text-align: center;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    #main {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+    #categoryList {
+      width: 220px;
+      background: #fff;
+      border-right: 1px solid #ccc;
+      overflow-y: auto;
+      padding: 1rem;
+    }
+    #menuItems {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem;
+    }
+    #summary {
+      width: 330px;
+      border-left: 1px solid #ccc;
+      padding: 1rem;
+      background: #f9f9f9;
+      overflow-y: auto;
+    }
+    button {
+      padding: 0.3rem 0.6rem;
+      margin: 0.3rem;
+      border: none;
+      border-radius: 4px;
+      background: #4c7cff;
+      color: #fff;
+      cursor: pointer;
+    }
+    input[type="text"], input[type="number"] {
+      width: 100%;
+      margin-top: 0.2rem;
+    }
+    .tax-line {
+      display: flex;
+      justify-content: space-between;
+    }
+
+    @media print {
+      button, input, header, #categoryList, #menuItems {
+        display: none !important;
+      }
+      #summary {
+        width: 100% !important;
+        border: none;
+        font-size: 1.6em !important;
+      }
+      #summaryTotals {
+        font-size: 1.6em;
+      }
+      #summaryTotals .tax-line span {
+        text-align: right;
+        display: inline-block;
+        min-width: 120px;
+      }
+      #summaryTotals .tax-line strong {
+        font-weight: normal;
+      }
+      #summaryTotals .tax-line:last-child strong {
+        font-weight: bold;
+        font-size: 2em;
+      }
+      #summaryTotals .tax-line:last-child span {
+        font-weight: bold;
+        font-size: 2em;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>智能点餐系统 Smart Ordering System</h1>
+    <input type="file" id="excelFile" accept=".xlsx,.xls"/>
+    <label><input type="radio" name="orderType" value="Waiting"/>Waiting</label>
+    <label><input type="radio" name="orderType" value="Pick Up"/>Pick Up</label>
+    <label><input type="radio" name="orderType" value="Delivery"/>Delivery</label>
+    <label><input type="radio" name="orderType" value="Dine-in"/>Dine-in</label>
+  </header>
+  <div id="main">
+    <div id="categoryList"></div>
+    <div id="menuItems"></div>
+    <div id="summary">
+      <h3>🧾 订单明细</h3>
+      <div id="cartDetails"></div>
+      <div id="summaryTotals"></div>
+      <button onclick="submitOrder()">下单打印</button>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script>
+    let fullData = [], cart = {}, orderType = '';
+
+    document.querySelectorAll('input[name="orderType"]').forEach(r => r.addEventListener('change', () => orderType = r.value));
+
+    document.getElementById('excelFile').addEventListener('change', e => {
+      const reader = new FileReader();
+      reader.onload = e => {
+        const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 }).slice(1).filter(r => r.length >= 5);
+        fullData = rows;
+        renderCuisineCategories();
+      };
+      reader.readAsArrayBuffer(e.target.files[0]);
+    });
+
+    function renderCuisineCategories() {
+      const cuisines = [...new Set(fullData.map(r => r[1]))];
+      const html = cuisines.map(c => {
+        const subs = [...new Set(fullData.filter(r => r[1] === c).map(r => r[2]))];
+        return `<div class="category-section"><h4>${c}</h4>${subs.map(s => `<button onclick="renderMenu('${c}','${s}')">${s}</button>`).join('')}</div>`;
+      }).join('');
+      document.getElementById('categoryList').innerHTML = html;
+    }
+
+    function renderMenu(cuisine, subcat) {
+      const items = fullData.filter(r => r[1] === cuisine && r[2] === subcat);
+      document.getElementById('menuItems').innerHTML = items.map(r => {
+        const [type, cu, sc, name, price] = r;
+        return `<div>
+          <strong>${name}</strong><br/>
+          Price: $${parseFloat(price).toFixed(2)}<br/>
+          Qty:<input type="number" id="qty-${name}" min="1" value="${cart[name]?.qty || 1}"/><br/>
+          Note:<input type="text" id="note-${name}" value="${cart[name]?.note || ''}"/><br/>
+          <button onclick="addToCart('${name}',${parseFloat(price)},'${type}','${cuisine}')">确定</button>
+        </div><hr/>`;
+      }).join('');
+    }
+
+    function addToCart(name, price, type, cuisine) {
+      const qty = parseInt(document.getElementById(`qty-${name}`).value);
+      const note = document.getElementById(`note-${name}`).value;
+      cart[name] = { qty, price, note, type, cuisine };
+      renderCart();
+    }
+
+    function updateQty(name, delta) {
+      if (cart[name]) {
+        cart[name].qty += delta;
+        if (cart[name].qty <= 0) delete cart[name];
+        renderCart();
+        syncMenu(name);
+      }
+    }
+
+    function syncMenu(name) {
+      if (document.getElementById(`qty-${name}`)) {
+        document.getElementById(`qty-${name}`).value = cart[name]?.qty || 1;
+        document.getElementById(`note-${name}`).value = cart[name]?.note || '';
+      }
+    }
+
+    function renderCart() {
+      let html = '', subtotal = 0, pst7 = 0, pst10 = 0, gst = 0, foodTotal = 0, drinkTotal = 0;
+      for (const n in cart) {
+        const { qty, price, note, type, cuisine } = cart[n];
+        const t = qty * price;
+        subtotal += t;
+        gst += t * 0.05;
+        if (type === 'Drink') {
+          if (cuisine === 'Non-Alchoholic') pst7 += t * 0.07;
+          if (cuisine === 'Alchoholic') pst10 += t * 0.10;
+          drinkTotal += t;
+        } else foodTotal += t;
+        html += `<div><strong>${n}</strong> x${qty}<br/>备注: ${note}<br/>
+               <button onclick="updateQty('${n}',1)">+</button>
+               <button onclick="updateQty('${n}',-1)">-</button>
+               </div><hr/>`;
+      }
+      const total = subtotal + gst + pst7 + pst10;
+      document.getElementById('cartDetails').innerHTML = html;
+      document.getElementById('summaryTotals').innerHTML = `
+        <div class="tax-line"><strong>Food (Before Tax):</strong><span>$${foodTotal.toFixed(2)}</span></div>
+        <div class="tax-line"><strong>Drink (Before Tax):</strong><span>$${drinkTotal.toFixed(2)}</span></div>
+        <div class="tax-line"><strong>Subtotal:</strong><span>$${subtotal.toFixed(2)}</span></div>
+        <div class="tax-line">GST (5%)<span>$${gst.toFixed(2)}</span></div>
+        <div class="tax-line">PST (7%)<span>$${pst7.toFixed(2)}</span></div>
+        <div class="tax-line">PST (10%)<span>$${pst10.toFixed(2)}</span></div>
+        <div class="tax-line"><strong>Total:</strong><span>$${total.toFixed(2)}</span></div>`;
+    }
+
+    function submitOrder() {
+      const orderId = Math.floor(10000000 + Math.random() * 90000000);
+      let txt = `订单类型：${orderType}\n订单号：${orderId}\n\n`;
+      const lines = [];
+      Object.entries(cart).forEach(([n, i]) => {
+        lines.push(`${n.padEnd(20)}${('$' + (i.qty * i.price).toFixed(2)).padStart(10)}`);
+        if (i.note) lines.push(`  备注: ${i.note}`);
+      });
+      const summaryTxt = document.getElementById('summaryTotals').innerText;
+      txt += lines.join('\n') + '\n\n' + summaryTxt;
+      if (Object.keys(cart).some(n => n.toLowerCase().includes('sushi'))) {
+        txt += '\n\n\n\n--- Sushi Items ---\n';
+        Object.entries(cart).forEach(([n, i]) => {
+          if (n.toLowerCase().includes('sushi'))
+            txt += `${n.padEnd(20)}${('$' + (i.qty * i.price).toFixed(2)).padStart(10)}\n`;
+        });
+      }
+      const pw = window.open('', '_blank', 'width=300,height=600');
+      pw.document.write(`<pre>${txt}</pre>`);
+      pw.document.close();
+      pw.print();
+    }
+  </script>
+</body>
+</html>
