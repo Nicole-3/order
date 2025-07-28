@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Smart Ordering System</title>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 0;
+      background: linear-gradient(135deg, #f4f6f8, #e3ecf3);
+      color: #333;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    header {
+      background: #4c7cff;
+      color: #fff;
+      padding: 1rem 2rem;
+      text-align: center;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header h1 {
+      margin: 0;
+      flex: 1;
+    }
+    #main {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+    #categoryList {
+      width: 220px;
+      background: #fff;
+      border-right: 1px solid #ccc;
+      overflow-y: auto;
+      padding: 1rem;
+    }
+    #menuItems {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 1rem;
+    }
+    #summary {
+      width: 330px;
+      border-left: 1px solid #ccc;
+      padding: 1rem;
+      background: #f9f9f9;
+      overflow-y: auto;
+    }
+    button {
+      padding: 0.6rem 1rem;
+      margin: 0.3rem;
+      border: none;
+      border-radius: 4px;
+      background: #4c7cff;
+      color: #fff;
+      cursor: pointer;
+      font-size: 18px;
+    }
+    input[type="text"], input[type="number"] {
+      width: 100%;
+      margin-top: 0.2rem;
+      font-size: 16px;
+    }
+    .tax-line {
+      display: flex;
+      justify-content: space-between;
+    }
+    .category-section {
+      margin-bottom: 1rem;
+      border-bottom: 1px solid #ccc;
+    }
+    #tableNumberField {
+      display: inline-block;
+      margin-left: 1rem;
+    }
+    .discount-section {
+      margin-top: 1rem;
+      color: red;
+      border-top: 1px solid #ccc;
+      padding-top: 0.5rem;
+    }
+    .discount-buttons button {
+      background: #eee;
+      color: #000;
+      font-size: 16px;
+      margin-right: 0.5rem;
+      padding: 0.3rem 0.7rem;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+      cursor: pointer;
+    }
+    .discount-buttons button.selected {
+      background: #4c7cff;
+      color: #fff;
+      border-color: #4c7cff;
+    }
+    #discountAmountInput {
+      width: 80px;
+      font-size: 16px;
+      margin-left: 0.5rem;
+      vertical-align: middle;
+      display: none;
+    }
+    @media print {
+      button, input, header, #categoryList, #menuItems {
+        display: none !important;
+      }
+      #summary {
+        width: 100% !important;
+        border: none;
+        font-size: 20px !important;
+      }
+      pre {
+        font-size: 20px;
+        line-height: 1.6;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+      }
+      html, body {
+        height: auto !important;
+        overflow: visible !important;
+      }
+      @page {
+        size: 80mm auto;
+        margin: 5mm;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Smart Ordering System</h1>
+    <input type="file" id="excelFile" accept=".xlsx,.xls"/>
+    <label><input type="radio" name="orderType" value="Waiting"/> Waiting</label>
+    <label><input type="radio" name="orderType" value="Pick Up"/> Pick Up</label>
+    <label><input type="radio" name="orderType" value="Delivery"/> Delivery</label>
+    <label><input type="radio" name="orderType" value="Dine-in"/> Dine-in</label>
+    <span id="tableNumberField">
+      <label>Table: <input type="text" id="tableNumberInput" placeholder="e.g. T1" style="width: 60px;"/></label>
+    </span>
+  </header>
+  <div id="main">
+    <div id="categoryList"></div>
+    <div id="menuItems"></div>
+    <div id="summary">
+      <h3>🧾 Order Summary</h3>
+      <div id="cartDetails"></div>
+      <div id="summaryTotals"></div>
+
+      <!-- 新增折扣选项区域 -->
+      <div class="discount-section">
+        <div><strong>Discount Option:</strong></div>
+        <div class="discount-buttons">
+          <button id="btnNo" onclick="setDiscount('No')">No</button>
+          <button id="btnFood10" onclick="setDiscount('Food10')">Food10%</button>
+          <button id="btnAmount" onclick="setDiscount('Amount')">Amount</button>
+          <input type="number" id="discountAmountInput" placeholder="0.00" min="0" step="0.01" oninput="updateDiscountAmount(this.value)" />
+        </div>
+        <div class="tax-line"><strong>Discount:</strong><span id="discountValue">$0.00</span></div>
+        <div class="tax-line"><strong>Total After Discount:</strong><span id="totalAfterDiscount">$0.00</span></div>
+      </div>
+
+      <button onclick="submitOrder()">Submit & Print</button>
+      <button onclick="clearCart()">Clear</button>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script>
+    let fullData = [], cart = {}, orderType = '', tableNumber = '';
+    let currentOrderId = Math.floor(10000000 + Math.random() * 90000000);
+    let orderUsed = false;
+
+    // 新增折扣相关变量
+    let discountType = 'No'; // 'No' | 'Food10' | 'Amount'
+    let discountAmount = 0;
+
+    document.querySelectorAll('input[name="orderType"]').forEach(r => {
+      r.addEventListener('change', () => orderType = r.value);
+    });
+
+    document.getElementById('excelFile').addEventListener('change', e => {
+      const reader = new FileReader();
+      reader.onload = e => {
+        const wb = XLSX.read(new Uint8Array(e.target.result), {type:'array'});
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1}).slice(1).filter(r=>r.length>=5);
+        fullData = rows;
+        renderCuisineCategories();
+      };
+      reader.readAsArrayBuffer(e.target.files[0]);
+    });
+
+    function renderCuisineCategories(){
+      const cuisines = [...new Set(fullData.map(r=>r[1]))];
+      const html = cuisines.map(c=>{
+        const subs = [...new Set(fullData.filter(r=>r[1]===c).map(r=>r[2]))];
+        return `<div class="category-section"><h4>${c}</h4>${subs.map(s=>`<button onclick="renderMenu('${c}','${s}')">${s}</button>`).join('')}</div>`;
+      }).join('');
+      document.getElementById('categoryList').innerHTML = html;
+    }
+
+    function renderMenu(cuisine, subcat){
+      const items = fullData.filter(r=>r[1]===cuisine && r[2]===subcat);
+      document.getElementById('menuItems').innerHTML = items.map(r=>{
+        const [type, cu, sc, name, price] = r;
+        return `<div>
+          <strong>${name}</strong><br/>
+          Price: $${parseFloat(price).toFixed(2)}<br/>
+          Qty:<input type="number" id="qty-${name}" min="1" value="${cart[name]?.qty||1}"/><br/>
+          Note:<input type="text" id="note-${name}" value="${cart[name]?.note||''}"/><br/>
+          <button onclick="addToCart('${name}',${parseFloat(price)},'${type}','${cu}')">Confirm</button>
+        </div>`;
+      }).join('');
+    }
+
+    function addToCart(name, price, type, cuisine){
+      const qtyInput = document.getElementById(`qty-${name}`);
+      const noteInput = document.getElementById(`note-${name}`);
+      const qty = qtyInput ? parseInt(qtyInput.value) || 1 : 1;
+      const note = noteInput ? noteInput.value : '';
+      cart[name] = { qty, price, note, type, cuisine };
+      renderCart();
+    }
+
+    function updateQty(name, delta){
+      if(cart[name]){
+        cart[name].qty += delta;
+        if(cart[name].qty <= 0) delete cart[name];
+        renderCart();
+        syncMenu(name);
+      }
+    }
+
+    function syncMenu(name){
+      const qtyInput = document.getElementById(`qty-${name}`);
+      const noteInput = document.getElementById(`note-${name}`);
+      if(qtyInput){
+        qtyInput.value = cart[name]?.qty || 1;
+      }
+      if(noteInput){
+        noteInput.value = cart[name]?.note || '';
+      }
+    }
+
+    function setDiscount(type){
+      discountType = type;
+      document.getElementById('btnNo').classList.remove('selected');
+      document.getElementById('btnFood10').classList.remove('selected');
+      document.getElementById('btnAmount').classList.remove('selected');
+      document.getElementById('btn' + type).classList.add('selected');
+
+      const input = document.getElementById('discountAmountInput');
+      if(type === 'Amount'){
+        input.style.display = 'inline-block';
+      } else {
+        input.style.display = 'none';
+        discountAmount = 0;
+        input.value = '';
+      }
+      renderCart();
+    }
+
+    function updateDiscountAmount(val){
+      discountAmount = parseFloat(val) || 0;
+      renderCart();
+    }
+
+    function renderCart(){
+      let html='', subtotal=0, pst7=0, pst10=0, gst=0, foodTotal=0, drinkTotal=0;
+      for(const n in cart){
+        const {qty, price, note, type, cuisine} = cart[n];
+        const t = qty*price;
+        subtotal += t;
+        if(type==='Drink'){
+          if(cuisine==='Non-Alchoholic') pst7 += t*0.07;
+          if(cuisine==='Alchoholic') pst10 += t*0.10;
+          drinkTotal += t;
+        } else foodTotal += t;
+        gst += t*0.05;
+        html+=`<div><strong>${n}</strong> x${qty}<br/>Note: ${note}<br/>
+               <button onclick="updateQty('${n}',1)">+</button>
+               <button onclick="updateQty('${n}',-1)">-</button></div><hr/>`;
+      }
+
+      const round = n => (Math.round(n * 100) / 100);
+      const display = n => round(n).toFixed(2);
+      const gstRounded = round(gst);
+      const pst7Rounded = round(pst7);
+      const pst10Rounded = round(pst10);
+      const total = subtotal + gstRounded + pst7Rounded + pst10Rounded;
+
+      // 计算折扣
+      let discountValue = 0;
+      if(discountType === 'Food10'){
+        discountValue = round((foodTotal * 1.05) * 0.1);
+      } else if(discountType === 'Amount'){
+        discountValue = discountAmount;
+      }
+      if(discountValue > total) discountValue = total; // 折扣不超过总价
+      const afterDiscountTotal = total - discountValue;
+
+      document.getElementById('cartDetails').innerHTML = html;
+      document.getElementById('summaryTotals').innerHTML = 
+        `<div class="tax-line"><strong>Food (Before Tax):</strong><span>$${display(foodTotal)}</span></div>
+        <div class="tax-line"><strong>Drink (Before Tax):</strong><span>$${display(drinkTotal)}</span></div>
+        <div class="tax-line"><strong>Subtotal:</strong><span>$${display(subtotal)}</span></div>
+        <div class="tax-line">GST (5%)<span>$${display(gst)}</span></div>
+        <div class="tax-line">PST (7%)<span>$${display(pst7)}</span></div>
+        <div class="tax-line">PST (10%)<span>$${display(pst10)}</span></div>
+        <div class="tax-line"><strong>Total:</strong><span>$${total.toFixed(2)}</span></div>`;
+
+      document.getElementById('discountValue').textContent = `$${discountValue.toFixed(2)}`;
+      document.getElementById('totalAfterDiscount').textContent = `$${afterDiscountTotal.toFixed(2)}`;
+    }
+
+    function clearCart(){
+      cart = {};
+      renderCart();
+      document.querySelectorAll('input[name="orderType"]').forEach(r => r.checked = false);
+      document.getElementById("tableNumberInput").value = '';
+      discountType = 'No';
+      discountAmount = 0;
+      document.getElementById('discountAmountInput').value = '';
+      document.getElementById('discountAmountInput').style.display = 'none';
+      document.getElementById('btnNo').classList.add('selected');
+      document.getElementById('btnFood10').classList.remove('selected');
+      document.getElementById('btnAmount').classList.remove('selected');
+      if(orderUsed) {
+        currentOrderId = Math.floor(10000000 + Math.random() * 90000000);
+        orderUsed = false;
+      }
+    }
+
+    function formatDateTime(){
+      const d = new Date();
+      const pad = n => n.toString().padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+
+    function submitOrder(){
+      tableNumber = document.getElementById("tableNumberInput").value;
+      let txt = `${formatDateTime()}\nOrder Type: ${orderType}\nOrder ID: ${currentOrderId}\n`;
+      if(orderType === "Dine-in" && tableNumber){
+        txt += `Table: ${tableNumber}\n`;
+      }
+      txt += '\n';
+
+      const round = n => (Math.round(n * 100) / 100);
+      const display = n => ('$'+round(n).toFixed(2)).padStart(10);
+
+      const lines = [];
+      Object.entries(cart).forEach(([n,i])=>{
+        const nameWithQty = `${i.qty}* ${n}`;
+        const priceStr = ('$'+round(i.qty*i.price).toFixed(2)).padStart(10);
+        lines.push(nameWithQty.padEnd(30) + priceStr);
+        if(i.note) lines.push(`  Note: ${i.note}`);
+      });
+
+      const foodTotal = Object.values(cart).filter(i=>i.type!=='Drink').reduce((s,i)=>s+i.qty*i.price,0);
+      const drinkTotal = Object.values(cart).filter(i=>i.type==='Drink').reduce((s,i)=>s+i.qty*i.price,0);
+      const subtotal = foodTotal + drinkTotal;
+      const gst = round(subtotal*0.05);
+      const pst7 = round(Object.values(cart).filter(i=>i.cuisine==='Non-Alchoholic').reduce((s,i)=>s+i.qty*i.price*0.07,0));
+      const pst10 = round(Object.values(cart).filter(i=>i.cuisine==='Alchoholic').reduce((s,i)=>s+i.qty*i.price*0.10,0));
+      const total = subtotal + gst + pst7 + pst10;
+
+      let discountValue = 0;
+      if(discountType === 'Food10'){
+        discountValue = round((foodTotal * 1.05) * 0.1);
+      } else if(discountType === 'Amount'){
+        discountValue = discountAmount;
+      }
+      if(discountValue > total) discountValue = total;
+      const afterDiscountTotal = total - discountValue;
+
+      const summaryLines = [
+        'Food (Before Tax):'.padEnd(30) + display(foodTotal),
+        'Drink (Before Tax):'.padEnd(30) + display(drinkTotal),
+        'Subtotal:'.padEnd(30) + display(subtotal),
+        'GST (5%)'.padEnd(30) + display(gst),
+        'PST (7%)'.padEnd(30) + display(pst7),
+        'PST (10%)'.padEnd(30) + display(pst10),
+        'Total:'.padEnd(30) + ('$' + total.toFixed(2)).padStart(10),
+        'Discount:'.padEnd(30) + ('$' + discountValue.toFixed(2)).padStart(10),
+        'Total After Discount:'.padEnd(30) + ('$' + afterDiscountTotal.toFixed(2)).padStart(10)
+      ];
+      txt += lines.concat('', ...summaryLines).join('\n');
+      const pw = window.open('','_blank','width=300,height=600');
+      pw.document.write(`<pre>${txt}</pre>`);
+      pw.document.close();
+      pw.print();
+      orderUsed = true;
+    }
+
+    // 初始化默认选中 No 折扣按钮
+    document.addEventListener('DOMContentLoaded', () => {
+      setDiscount('No');
+      renderCart();
+    });
+  </script>
+</body>
+</html>
